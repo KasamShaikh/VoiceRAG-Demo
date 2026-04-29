@@ -116,5 +116,5 @@ Speech token, and passes it as `Authorization: Bearer …` to STT/TTS.
 - [x] Phase 3 — Retrieval service (`/search` + semantic cache)
 - [x] Phase 4 — Voice Live path (WS relay + `kb_search` tool + browser client)
 - [x] Phase 5 — Composed path (Speech STT → AOAI streaming → Speech TTS)
-- [ ] Phase 6 — Latency tuning
-- [ ] Phase 7 — Telemetry + dashboard
+- [x] Phase 6 — Latency tuning (token cache, persistent HTTP/2 pool, fast first-sentence flush, prewarm)
+- [x] Phase 7 — Telemetry (`/metrics` ring buffer + App Insights via OTel)

@@ -30,7 +30,7 @@ from typing import Any
 import websockets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import config
+from . import config, telemetry
 from .search import embed, hybrid_semantic_search
 
 logger = logging.getLogger("bridge.voicelive")
@@ -199,6 +199,7 @@ async def _upstream_to_client(
     client: WebSocket, upstream: websockets.WebSocketClientProtocol
 ) -> None:
     pending_calls: dict[str, dict[str, str]] = {}
+    turn: dict[str, Any] = {"started": None, "first_audio_ms": None}
     try:
         async for raw in upstream:
             if isinstance(raw, (bytes, bytearray)):
@@ -213,6 +214,19 @@ async def _upstream_to_client(
                 continue
 
             etype = evt.get("type")
+            if etype == "input_audio_buffer.speech_started":
+                turn["started"] = time.perf_counter()
+                turn["first_audio_ms"] = None
+            elif etype == "response.audio.delta" and turn["started"] and turn["first_audio_ms"] is None:
+                turn["first_audio_ms"] = (time.perf_counter() - turn["started"]) * 1000.0
+            elif etype == "response.done" and turn["started"]:
+                full_ms = (time.perf_counter() - turn["started"]) * 1000.0
+                telemetry.record(
+                    path="voicelive",
+                    first_audio_ms=turn["first_audio_ms"],
+                    full_ms=full_ms,
+                )
+                turn["started"] = None
             if etype == "response.output_item.added":
                 item = evt.get("item") or {}
                 if item.get("type") == "function_call":

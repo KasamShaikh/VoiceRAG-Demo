@@ -19,15 +19,36 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from . import config
+from . import telemetry as tel
 from .cache import CacheEntry, get_cache
+from .composed import prewarm as composed_prewarm
 from .composed import router as composed_router
+from .composed import shutdown as composed_shutdown
 from .search import embed, hybrid_semantic_search
 from .voicelive import router as voicelive_router
 
 logger = logging.getLogger("bridge")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Voice RAG Bridge", version="0.5.0")
+
+from contextlib import asynccontextmanager  # noqa: E402
+
+
+@asynccontextmanager
+async def _lifespan(app: "FastAPI"):
+    tel.configure_app_insights(app)
+    try:
+        await composed_prewarm()
+    except Exception:  # noqa: BLE001
+        logger.warning("prewarm failed", exc_info=True)
+    yield
+    try:
+        await composed_shutdown()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+app = FastAPI(title="Voice RAG Bridge", version="0.7.0", lifespan=_lifespan)
 app.include_router(voicelive_router)
 app.include_router(composed_router)
 
@@ -116,6 +137,18 @@ async def _synthesize(query: str, hits: list[Any]) -> str:
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics(path: str | None = None, limit: int = 50) -> dict[str, Any]:
+    return {
+        "summary": {
+            "all": tel.summary(None),
+            "voicelive": tel.summary("voicelive"),
+            "composed": tel.summary("composed"),
+        },
+        "recent": tel.recent(limit=limit, path=path),
+    }
 
 
 @app.post("/search", response_model=SearchResponse)

@@ -34,7 +34,7 @@ import azure.cognitiveservices.speech as speechsdk
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import config
+from . import config, telemetry
 from .search import embed, hybrid_semantic_search
 
 logger = logging.getLogger("bridge.composed")
@@ -42,27 +42,78 @@ router = APIRouter()
 
 _SENTENCE_END = (".", "!", "?", "\n")
 _MIN_SENT_LEN = 24  # don't TTS tiny fragments like "Yes."
+# Phase 6: flush the FIRST sentence as soon as we see any boundary, no minimum.
+# The remaining sentences use _MIN_SENT_LEN to avoid 1-2 word fragments.
+_FAST_FIRST_MIN_LEN = 2
 
 
-# ---- speech token ----------------------------------------------------------
+# ---- speech token (cached) -------------------------------------------------
+
+_TOKEN_TTL = 9 * 60  # tokens last 10 min; refresh at 9.
+_token_cache: dict[str, Any] = {"token": None, "region": None, "exp": 0.0}
+_token_lock = asyncio.Lock()
 
 
-async def _issue_speech_token() -> tuple[str, str]:
+async def _issue_speech_token(force: bool = False) -> tuple[str, str]:
     region = config.AZURE_SPEECH_REGION
     if not region:
         raise RuntimeError("AZURE_SPEECH_REGION is not set")
-    aad = config.credential().get_token(config.AZURE_VOICE_LIVE_SCOPE).token
-    url = f"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
-    async with httpx.AsyncClient(timeout=10) as h:
-        r = await h.post(
+    now = time.time()
+    if (
+        not force
+        and _token_cache["token"]
+        and _token_cache["region"] == region
+        and _token_cache["exp"] > now
+    ):
+        return _token_cache["token"], region
+    async with _token_lock:
+        if not force and _token_cache["token"] and _token_cache["exp"] > time.time():
+            return _token_cache["token"], region
+        aad = config.credential().get_token(config.AZURE_VOICE_LIVE_SCOPE).token
+        url = f"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+        client = _shared_http()
+        r = await client.post(
             url,
-            headers={
-                "Authorization": f"Bearer {aad}",
-                "Content-Length": "0",
-            },
+            headers={"Authorization": f"Bearer {aad}", "Content-Length": "0"},
         )
         r.raise_for_status()
-        return r.text, region
+        token = r.text
+        _token_cache.update(
+            {"token": token, "region": region, "exp": time.time() + _TOKEN_TTL}
+        )
+        return token, region
+
+
+# ---- shared httpx client (Phase 6) -----------------------------------------
+
+_http_client: httpx.AsyncClient | None = None
+
+
+def _shared_http() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0, connect=5.0),
+            http2=True,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=40),
+        )
+    return _http_client
+
+
+async def prewarm() -> None:
+    """Open Speech token + warm up TTS DNS/TLS at startup."""
+    try:
+        await _issue_speech_token(force=True)
+        logger.info("composed: speech token prewarmed")
+    except Exception:  # noqa: BLE001
+        logger.warning("composed prewarm failed", exc_info=True)
+
+
+async def shutdown() -> None:
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+    _http_client = None
 
 
 # ---- TTS (REST, raw PCM streamed) ------------------------------------------
@@ -123,7 +174,10 @@ async def _send_tts(
     region: str,
     state: dict[str, Any],
 ) -> None:
+    t = time.perf_counter()
     pcm = await _tts_pcm(http, text, token, region)
+    if state.get("tts_first_byte_ms") is None:
+        state["tts_first_byte_ms"] = (time.perf_counter() - t) * 1000.0
     if state.get("first_audio_ms") is None and state.get("turn_started") is not None:
         state["first_audio_ms"] = (time.perf_counter() - state["turn_started"]) * 1000.0
         await _safe_send(
@@ -150,97 +204,125 @@ async def _run_turn(
     state: dict[str, Any] = {
         "turn_started": turn_started,
         "first_audio_ms": None,
+        "llm_ttft_ms": None,
+        "tts_first_byte_ms": None,
     }
-    async with httpx.AsyncClient(timeout=30, http2=True) as http:
-        try:
-            vec = await embed(query)
-            hits, _ = await hybrid_semantic_search(query, query_vector=vec)
-        except Exception as e:  # noqa: BLE001
-            logger.exception("retrieval failed")
-            await _safe_send(ws, {"type": "error", "error": f"retrieval: {e}"})
-            return
+    http = _shared_http()
+    timings: dict[str, float] = {}
+    try:
+        t = time.perf_counter()
+        vec = await embed(query)
+        timings["embed_ms"] = (time.perf_counter() - t) * 1000.0
+        t = time.perf_counter()
+        hits, _ = await hybrid_semantic_search(query, query_vector=vec)
+        timings["search_ms"] = (time.perf_counter() - t) * 1000.0
+    except Exception as e:  # noqa: BLE001
+        logger.exception("retrieval failed")
+        await _safe_send(ws, {"type": "error", "error": f"retrieval: {e}"})
+        return
 
-        if not hits:
-            text = "I don't have that information in the knowledge base."
-            await _send_tts(ws, http, text, token, region, state)
-            await _safe_send(ws, {"type": "response.done", "text": text})
-            return
-
-        user_msg = (
-            f"Question: {query}\n\n"
-            f"Sources:\n{_format_sources(hits)}\n\n"
-            "Answer concisely (under 60 spoken words) using ONLY the sources above. "
-            "Cite sources inline using the [doc#] tags."
-        )
-
-        client = config.aoai_client()
-        try:
-            stream = await client.chat.completions.create(
-                model=config.AZURE_OPENAI_CHAT_DEPLOYMENT,
-                temperature=0.2,
-                max_tokens=180,
-                stream=True,
-                messages=[
-                    {"role": "system", "content": config.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.exception("chat stream open failed")
-            await _safe_send(ws, {"type": "error", "error": f"chat: {e}"})
-            return
-
-        full_text: list[str] = []
-        buf = ""
-        try:
-            async for chunk in stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta.content
-                if not delta:
-                    continue
-                full_text.append(delta)
-                buf += delta
-                # flush every sentence boundary >= MIN_SENT_LEN
-                while True:
-                    idxs = [buf.find(c) for c in _SENTENCE_END]
-                    idxs = [i for i in idxs if i != -1]
-                    if not idxs:
-                        break
-                    cut = min(idxs) + 1
-                    if cut < _MIN_SENT_LEN:
-                        # extend; look for next boundary further out
-                        next_idx = -1
-                        for c in _SENTENCE_END:
-                            j = buf.find(c, cut)
-                            if j != -1 and (next_idx == -1 or j < next_idx):
-                                next_idx = j
-                        if next_idx == -1:
-                            break
-                        cut = next_idx + 1
-                    sentence = buf[:cut].strip()
-                    buf = buf[cut:]
-                    if sentence:
-                        await _send_tts(ws, http, sentence, token, region, state)
-        except Exception as e:  # noqa: BLE001
-            logger.exception("chat stream failed")
-            await _safe_send(ws, {"type": "error", "error": f"chat: {e}"})
-            return
-
-        tail = buf.strip()
-        if tail:
-            await _send_tts(ws, http, tail, token, region, state)
-
-        full = "".join(full_text).strip()
+    if not hits:
+        text = "I don't have that information in the knowledge base."
+        await _send_tts(ws, http, text, token, region, state)
         full_ms = (time.perf_counter() - turn_started) * 1000.0
-        await _safe_send(
-            ws,
-            {
-                "type": "response.done",
-                "text": full,
-                "full_ms": round(full_ms),
-            },
+        telemetry.record(
+            path="composed",
+            first_audio_ms=state.get("first_audio_ms"),
+            full_ms=full_ms,
+            **timings,
         )
+        await _safe_send(
+            ws, {"type": "response.done", "text": text, "full_ms": round(full_ms)}
+        )
+        return
+
+    user_msg = (
+        f"Question: {query}\n\n"
+        f"Sources:\n{_format_sources(hits)}\n\n"
+        "Answer concisely (under 60 spoken words) using ONLY the sources above. "
+        "Cite sources inline using the [doc#] tags."
+    )
+
+    client = config.aoai_client()
+    try:
+        stream = await client.chat.completions.create(
+            model=config.AZURE_OPENAI_CHAT_DEPLOYMENT,
+            temperature=0.2,
+            max_tokens=180,
+            stream=True,
+            messages=[
+                {"role": "system", "content": config.SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("chat stream open failed")
+        await _safe_send(ws, {"type": "error", "error": f"chat: {e}"})
+        return
+
+    full_text: list[str] = []
+    buf = ""
+    sentences_sent = 0
+    try:
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if not delta:
+                continue
+            if state["llm_ttft_ms"] is None:
+                state["llm_ttft_ms"] = (time.perf_counter() - turn_started) * 1000.0
+            full_text.append(delta)
+            buf += delta
+            # flush every sentence boundary; first sentence flushes ASAP.
+            while True:
+                idxs = [buf.find(c) for c in _SENTENCE_END]
+                idxs = [i for i in idxs if i != -1]
+                if not idxs:
+                    break
+                cut = min(idxs) + 1
+                min_len = _FAST_FIRST_MIN_LEN if sentences_sent == 0 else _MIN_SENT_LEN
+                if cut < min_len:
+                    next_idx = -1
+                    for c in _SENTENCE_END:
+                        j = buf.find(c, cut)
+                        if j != -1 and (next_idx == -1 or j < next_idx):
+                            next_idx = j
+                    if next_idx == -1:
+                        break
+                    cut = next_idx + 1
+                sentence = buf[:cut].strip()
+                buf = buf[cut:]
+                if sentence:
+                    await _send_tts(ws, http, sentence, token, region, state)
+                    sentences_sent += 1
+    except Exception as e:  # noqa: BLE001
+        logger.exception("chat stream failed")
+        await _safe_send(ws, {"type": "error", "error": f"chat: {e}"})
+        return
+
+    tail = buf.strip()
+    if tail:
+        await _send_tts(ws, http, tail, token, region, state)
+
+    full = "".join(full_text).strip()
+    full_ms = (time.perf_counter() - turn_started) * 1000.0
+    telemetry.record(
+        path="composed",
+        first_audio_ms=state.get("first_audio_ms"),
+        full_ms=full_ms,
+        llm_ttft_ms=state.get("llm_ttft_ms"),
+        tts_first_byte_ms=state.get("tts_first_byte_ms"),
+        **timings,
+    )
+    await _safe_send(
+        ws,
+        {
+            "type": "response.done",
+            "text": full,
+            "full_ms": round(full_ms),
+        },
+    )
 
 
 # ---- WebSocket endpoint ----------------------------------------------------
