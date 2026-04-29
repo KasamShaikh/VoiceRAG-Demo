@@ -1,3 +1,20 @@
-{"q": "REPLACE_WITH_QUESTION_FROM_PDF_1", "expected_chunks": ["section or page hint"], "expected_answer": "..."}
-{"q": "REPLACE_WITH_QUESTION_FROM_PDF_1", "expected_chunks": [], "expected_answer": "..."}
-{"q": "REPLACE_WITH_QUESTION_FROM_PDF_2", "expected_chunks": [], "expected_answer": "..."}
+{"q": "What is my policy number?", "expected_chunks": ["100005326400", "Policy Number", "Policy Details"], "expected_answer": "100005326400"}
+{"q": "What is the sum insured on my policy?", "expected_chunks": ["Sum Insured", "2,500,000", "Insured Details"], "expected_answer": "Rs 25,00,000"}
+{"q": "When does my policy expire?", "expected_chunks": ["Policy End Date", "May 15, 2027", "Policy Details"], "expected_answer": "May 15, 2027"}
+{"q": "Who is the nominee on my policy?", "expected_chunks": ["Nominee", "SAMIKSHA", "Spouse"], "expected_answer": "Samiksha Uppadhyay (Spouse)"}
+{"q": "How much was the total premium I paid?", "expected_chunks": ["Total Premium", "27,542", "Premium Details"], "expected_answer": "Rs 27,542"}
+{"q": "Which optional add-on covers did I opt for?", "expected_chunks": ["Optional Add-on Covers", "Power Booster", "Claim Protector", "Inflation Protector", "Nursing at Home"], "expected_answer": "Power Booster, Claim Protector, Inflation Protector, Nursing at Home, Dependent Accommodation Benefit, Durable Medical Equipment, 2-Hour Hospitalization."}
+{"q": "What is the waiting period for pre-existing diseases?", "expected_chunks": ["Pre-existing Disease", "Waiting Period", "3 Years"], "expected_answer": "3 years."}
+{"q": "What is the initial waiting period under the policy?", "expected_chunks": ["Initial Waiting", "30 Days", "Waiting Period"], "expected_answer": "30 days."}
+{"q": "What is the waiting period for maternity benefits?", "expected_chunks": ["Maternity", "Waiting", "2 Years"], "expected_answer": "2 years."}
+{"q": "Explain the Reset Benefit on the Elevate policy.", "expected_chunks": ["Reset Benefit", "Sum Insured", "100%", "unlimited"], "expected_answer": "Reset of up to 100% of sum insured, unlimited times in a policy year."}
+{"q": "How does the Power Booster benefit work?", "expected_chunks": ["Power Booster", "Super Loyalty Bonus", "Sum Insured"], "expected_answer": "Accumulates a 100% Super Loyalty Bonus per year, no reduction even on claims."}
+{"q": "What does Inflation Protector do?", "expected_chunks": ["Inflation Protector", "Consumer Price", "Sum Insured"], "expected_answer": "Increases the sum insured at renewal in line with CPI inflation."}
+{"q": "How many days of pre-hospitalization and post-hospitalization expenses are covered?", "expected_chunks": ["Pre/Post Hospitalization", "90 days", "180 days"], "expected_answer": "90 days pre-hospitalization and 180 days post-hospitalization."}
+{"q": "What is the definition of Domiciliary Hospitalization in the Elevate policy?", "expected_chunks": ["Domiciliary", "treatment at home", "patient cannot be moved", "no room"], "expected_answer": "Treatment taken at home when the patient cannot be moved or no hospital room is available."}
+{"q": "Define Loyalty Bonus as used in the policy.", "expected_chunks": ["Loyalty Bonus", "increase", "Sum Insured", "without"], "expected_answer": "Addition to the Sum Insured granted by the insurer without any premium increase."}
+{"q": "What is meant by Day Care Treatment?", "expected_chunks": ["Day Care", "less than 24 hours", "technological advancement"], "expected_answer": "Treatment that historically required hospitalization over 24 hours but is completed in under 24 hours."}
+{"q": "Does the policy cover AYUSH treatment?", "expected_chunks": ["AYUSH", "Sum Insured", "Inpatient"], "expected_answer": "Yes, AYUSH inpatient treatment is covered up to the Sum Insured."}
+{"q": "What is the Claim Protector add-on?", "expected_chunks": ["Claim Protector", "non-payable", "Sum Insured"], "expected_answer": "Covers consumables and non-payable items like gloves and masks up to the sum insured."}
+{"q": "What benefits does the 2-Hour Hospitalization cover provide?", "expected_chunks": ["2 - Hour Hospitalization", "minimum of 2 hours", "Annual Sum Insured"], "expected_answer": "Covers hospitalization of at least 2 hours (24 hours for AYUSH) up to the annual sum insured."}
+{"q": "What is the room category I am entitled to?", "expected_chunks": ["Room Category", "Single private room", "Inpatient"], "expected_answer": "Single private room."}

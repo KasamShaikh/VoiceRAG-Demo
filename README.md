@@ -69,6 +69,25 @@ Cache policy: cosine ≥ `CACHE_SIM_THRESHOLD` (default 0.97), bounded LRU
 (default 500 entries, 1 h TTL). Falls back to in-memory if `REDIS_HOST` /
 `REDIS_PASSWORD` aren't set.
 
+### 4. Voice call demo (Phase 4)
+
+With the bridge running (`./scripts/dev.ps1`), open
+[http://127.0.0.1:8000/web/](http://127.0.0.1:8000/web/) in Chrome / Edge,
+click **Start call**, allow microphone, and ask one of the gold questions
+(e.g. *"What is my sum insured?"*). The page streams 24 kHz PCM16 to
+`/voicelive/ws`, which relays to Azure Voice Live and exposes a single
+`kb_search` tool that the realtime model can invoke. Per-turn first-audio
+and full-response latency render live in the metrics table.
+
+Voice Live env knobs (defaults usually fine):
+
+| Variable | Default |
+| --- | --- |
+| `AZURE_VOICE_LIVE_WSS_URL` | derived from `AZURE_OPENAI_ENDPOINT` + `/openai/realtime` |
+| `AZURE_VOICE_LIVE_MODEL` | `gpt-4o-mini-realtime-preview` |
+| `AZURE_VOICE_LIVE_VOICE` | `alloy` |
+| `AZURE_VOICE_LIVE_API_VERSION` | `2025-04-01-preview` |
+
 ## Status
 
 - [x] Phase 1 — Bicep authored
@@ -76,7 +95,7 @@ Cache policy: cosine ≥ `CACHE_SIM_THRESHOLD` (default 0.97), bounded LRU
 - [x] Phase 2 — Indexer authored
 - [ ] Phase 2 — Indexed
 - [x] Phase 3 — Retrieval service (`/search` + semantic cache)
-- [ ] Phase 4 — Voice Live path
+- [x] Phase 4 — Voice Live path (WS relay + `kb_search` tool + browser client)
 - [ ] Phase 5 — Composed path
 - [ ] Phase 6 — Latency tuning
 - [ ] Phase 7 — Telemetry + dashboard

@@ -21,11 +21,23 @@ from pydantic import BaseModel, Field
 from . import config
 from .cache import CacheEntry, get_cache
 from .search import embed, hybrid_semantic_search
+from .voicelive import router as voicelive_router
 
 logger = logging.getLogger("bridge")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Voice RAG Bridge", version="0.3.0")
+app = FastAPI(title="Voice RAG Bridge", version="0.4.0")
+app.include_router(voicelive_router)
+
+# Serve the web client (Path A demo) when the folder is present.
+import os as _os  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_web_dir = _os.environ.get(
+    "WEB_DIR", _os.path.join(_os.path.dirname(__file__), "..", "web")
+)
+if _os.path.isdir(_web_dir):
+    app.mount("/web", StaticFiles(directory=_web_dir, html=True), name="web")
 
 
 # ---- models ----------------------------------------------------------------

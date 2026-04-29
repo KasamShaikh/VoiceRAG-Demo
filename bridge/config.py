@@ -29,6 +29,48 @@ AZURE_SEARCH_VECTOR_K = int(os.environ.get("AZURE_SEARCH_VECTOR_K", "50"))
 REDIS_HOST = os.environ.get("REDIS_HOST", "")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", "6380"))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
+
+# ---- Voice Live (Phase 4) --------------------------------------------------
+#
+# Wire protocol matches Azure AI Voice Live / AOAI Realtime. The relay opens a
+# WS to AZURE_VOICE_LIVE_WSS_URL (model + api-version appended if not already).
+#
+# Default points at AOAI realtime via the same AOAI account; if the workspace
+# uses the Speech-hosted Voice Live endpoint instead, override the env var.
+AZURE_VOICE_LIVE_API_VERSION = os.environ.get(
+    "AZURE_VOICE_LIVE_API_VERSION", "2025-04-01-preview"
+)
+AZURE_VOICE_LIVE_MODEL = os.environ.get(
+    "AZURE_VOICE_LIVE_MODEL", "gpt-4o-mini-realtime-preview"
+)
+AZURE_VOICE_LIVE_VOICE = os.environ.get("AZURE_VOICE_LIVE_VOICE", "alloy")
+AZURE_VOICE_LIVE_WSS_URL = os.environ.get("AZURE_VOICE_LIVE_WSS_URL", "")
+AZURE_VOICE_LIVE_SCOPE = os.environ.get(
+    "AZURE_VOICE_LIVE_SCOPE", "https://cognitiveservices.azure.com/.default"
+)
+
+
+def voice_live_url() -> str:
+    """Build the upstream WSS URL.
+
+    Preference order:
+      1. AZURE_VOICE_LIVE_WSS_URL (full URL, used as-is if it has query string).
+      2. Derived from AZURE_OPENAI_ENDPOINT -> /openai/realtime.
+    """
+    base = AZURE_VOICE_LIVE_WSS_URL
+    if not base:
+        if not AZURE_OPENAI_ENDPOINT:
+            raise RuntimeError("Set AZURE_VOICE_LIVE_WSS_URL or AZURE_OPENAI_ENDPOINT")
+        host = AZURE_OPENAI_ENDPOINT.replace("https://", "").rstrip("/")
+        base = f"wss://{host}/openai/realtime"
+    if "?" in base:
+        return base
+    return (
+        f"{base}?api-version={AZURE_VOICE_LIVE_API_VERSION}"
+        f"&deployment={AZURE_VOICE_LIVE_MODEL}"
+    )
+
+
 CACHE_SIM_THRESHOLD = float(os.environ.get("CACHE_SIM_THRESHOLD", "0.97"))
 CACHE_MAX_ENTRIES = int(os.environ.get("CACHE_MAX_ENTRIES", "500"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "3600"))

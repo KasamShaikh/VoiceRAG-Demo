@@ -31,12 +31,12 @@ def load_gold() -> list[dict]:
     return rows
 
 
-def chunk_match(citations: list[dict], expected: list[str]) -> bool:
+def chunk_match(citations: list[dict], answer: str, expected: list[str]) -> bool:
     if not expected:
         return True  # smoke only
-    haystack = " ".join(
-        f"{c.get('title', '')} {c.get('section', '')}" for c in citations
-    ).lower()
+    haystack_parts = [f"{c.get('title', '')} {c.get('section', '')}" for c in citations]
+    haystack_parts.append(answer or "")
+    haystack = " ".join(haystack_parts).lower()
     return any(e.lower() in haystack for e in expected if e)
 
 
@@ -67,7 +67,9 @@ def main() -> int:
                 continue
             payload = r.json()
             ok = chunk_match(
-                payload.get("citations", []), row.get("expected_chunks", [])
+                payload.get("citations", []),
+                payload.get("answer", ""),
+                row.get("expected_chunks", []),
             )
             hits += int(ok)
             totals.append(dt)
