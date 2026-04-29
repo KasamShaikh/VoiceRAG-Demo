@@ -20,14 +20,16 @@ from pydantic import BaseModel, Field
 
 from . import config
 from .cache import CacheEntry, get_cache
+from .composed import router as composed_router
 from .search import embed, hybrid_semantic_search
 from .voicelive import router as voicelive_router
 
 logger = logging.getLogger("bridge")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Voice RAG Bridge", version="0.4.0")
+app = FastAPI(title="Voice RAG Bridge", version="0.5.0")
 app.include_router(voicelive_router)
+app.include_router(composed_router)
 
 # Serve the web client (Path A demo) when the folder is present.
 import os as _os  # noqa: E402

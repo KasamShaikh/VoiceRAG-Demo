@@ -162,7 +162,12 @@ function playPCM16(b64) {
 
 // ---- WS handling ----------------------------------------------------------
 
-function handleEvent(evt) {
+function selectedPath() {
+  const r = document.querySelector('input[name="path"]:checked');
+  return r ? r.value : "A";
+}
+
+function handleEventA(evt) {
   switch (evt.type) {
     case "session.created":
     case "session.updated":
@@ -199,12 +204,53 @@ function handleEvent(evt) {
   }
 }
 
+function handleEventB(evt) {
+  switch (evt.type) {
+    case "transcript.partial":
+      if (!turn && (evt.text || "").trim()) {
+        turn = { startedAt: performance.now() };
+      }
+      logTranscript("user", evt.text || "");
+      break;
+    case "transcript.final":
+      logTranscript("user", evt.text || "");
+      finalizeLine();
+      break;
+    case "audio.delta":
+      if (evt.text) logTranscript("bot", evt.text + " ", true);
+      playPCM16(evt.audio);
+      break;
+    case "metrics":
+      // server-measured first-audio (utterance start -> first synth byte sent)
+      if (turn && evt.first_audio_ms != null && !turn.firstAudioMs) {
+        turn.firstAudioMs = evt.first_audio_ms;
+        renderMetrics();
+      }
+      break;
+    case "response.done":
+      if (turn) {
+        turn.fullMs = Math.round(performance.now() - turn.startedAt);
+        turns.push(turn);
+        turn = null;
+        renderMetrics();
+        finalizeLine();
+      }
+      break;
+    case "error":
+      logTranscript("system", `[error] ${evt.error}`);
+      break;
+  }
+}
+
 async function start() {
   setRunning(true);
   await startMic();
+  const path = selectedPath();
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/voicelive/ws`);
-  ws.onopen = () => logTranscript("system", "[ws open]");
+  const route = path === "B" ? "/composed/ws" : "/voicelive/ws";
+  ws = new WebSocket(`${proto}://${location.host}${route}`);
+  const handler = path === "B" ? handleEventB : handleEventA;
+  ws.onopen = () => logTranscript("system", `[ws open path ${path}]`);
   ws.onerror = () => logTranscript("system", "[ws error]");
   ws.onclose = () => {
     logTranscript("system", "[ws closed]");
@@ -213,7 +259,7 @@ async function start() {
   };
   ws.onmessage = (e) => {
     if (typeof e.data !== "string") return;
-    try { handleEvent(JSON.parse(e.data)); } catch {}
+    try { handler(JSON.parse(e.data)); } catch {}
   };
 }
 

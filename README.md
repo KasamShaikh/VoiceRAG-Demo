@@ -88,6 +88,25 @@ Voice Live env knobs (defaults usually fine):
 | `AZURE_VOICE_LIVE_VOICE` | `alloy` |
 | `AZURE_VOICE_LIVE_API_VERSION` | `2025-04-01-preview` |
 
+### 5. Composed path (Phase 5)
+
+Toggle **Path B** in the demo page; the same mic stream is routed to
+`/composed/ws`. The bridge runs continuous STT via the Speech SDK,
+streams retrieval + AOAI chat completion, and flushes each *sentence*
+to Speech TTS as soon as the boundary appears in the LLM stream — that's
+what keeps the composed path within striking distance of Voice Live.
+
+Auth is keyless: the bridge MI fetches an AAD token, exchanges it at
+`<region>.api.cognitive.microsoft.com/sts/v1.0/issueToken` for a 10-minute
+Speech token, and passes it as `Authorization: Bearer …` to STT/TTS.
+
+| Variable | Default |
+| --- | --- |
+| `AZURE_SPEECH_REGION` | (set by Bicep output) |
+| `AZURE_SPEECH_STT_LANGUAGE` | `en-US` |
+| `AZURE_SPEECH_TTS_VOICE` | `en-US-JennyNeural` |
+| `AZURE_SPEECH_AUDIO_RATE` | `24000` |
+
 ## Status
 
 - [x] Phase 1 — Bicep authored
@@ -96,6 +115,6 @@ Voice Live env knobs (defaults usually fine):
 - [ ] Phase 2 — Indexed
 - [x] Phase 3 — Retrieval service (`/search` + semantic cache)
 - [x] Phase 4 — Voice Live path (WS relay + `kb_search` tool + browser client)
-- [ ] Phase 5 — Composed path
+- [x] Phase 5 — Composed path (Speech STT → AOAI streaming → Speech TTS)
 - [ ] Phase 6 — Latency tuning
 - [ ] Phase 7 — Telemetry + dashboard

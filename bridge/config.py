@@ -49,6 +49,13 @@ AZURE_VOICE_LIVE_SCOPE = os.environ.get(
     "AZURE_VOICE_LIVE_SCOPE", "https://cognitiveservices.azure.com/.default"
 )
 
+# ---- Speech (Phase 5 composed path) ----------------------------------------
+AZURE_SPEECH_REGION = os.environ.get("AZURE_SPEECH_REGION", "")
+AZURE_SPEECH_ENDPOINT = os.environ.get("AZURE_SPEECH_ENDPOINT", "")
+AZURE_SPEECH_STT_LANGUAGE = os.environ.get("AZURE_SPEECH_STT_LANGUAGE", "en-US")
+AZURE_SPEECH_TTS_VOICE = os.environ.get("AZURE_SPEECH_TTS_VOICE", "en-US-JennyNeural")
+AZURE_SPEECH_AUDIO_RATE = int(os.environ.get("AZURE_SPEECH_AUDIO_RATE", "24000"))
+
 
 def voice_live_url() -> str:
     """Build the upstream WSS URL.
