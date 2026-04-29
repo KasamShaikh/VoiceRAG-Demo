@@ -42,13 +42,40 @@ This loads `azd` env values, uploads PDFs to the `kb-pdfs` container, then
 creates/updates the AI Search datasource, index, skillset, and indexer and
 runs it end-to-end. Expect ~30–60 seconds for two PDFs.
 
+### 3. Run the retrieval service locally (Phase 3)
+
+```pwsh
+# Optional: enable Redis-backed cache
+az redis list-keys -g $env:AZURE_RESOURCE_GROUP -n <redis-name> --query primaryKey -o tsv `
+  | % { azd env set REDIS_PASSWORD $_ }
+
+./scripts/dev.ps1
+# in another terminal:
+python eval/run_eval.py
+```
+
+`POST http://127.0.0.1:8000/search` with `{"query":"..."}` returns:
+
+```json
+{
+  "answer": "...",
+  "citations": [...],
+  "cache_hit": false,
+  "timings_ms": {"embed": 90, "search": 180, "synthesize": 410, "total": 680}
+}
+```
+
+Cache policy: cosine ≥ `CACHE_SIM_THRESHOLD` (default 0.97), bounded LRU
+(default 500 entries, 1 h TTL). Falls back to in-memory if `REDIS_HOST` /
+`REDIS_PASSWORD` aren't set.
+
 ## Status
 
 - [x] Phase 1 — Bicep authored
 - [ ] Phase 1 — Deployed
 - [x] Phase 2 — Indexer authored
 - [ ] Phase 2 — Indexed
-- [ ] Phase 3 — Retrieval service
+- [x] Phase 3 — Retrieval service (`/search` + semantic cache)
 - [ ] Phase 4 — Voice Live path
 - [ ] Phase 5 — Composed path
 - [ ] Phase 6 — Latency tuning

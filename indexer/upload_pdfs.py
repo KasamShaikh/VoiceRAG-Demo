@@ -9,6 +9,7 @@ Usage:
     python indexer/upload_pdfs.py              # uploads everything in ./data/*.pdf
     python indexer/upload_pdfs.py path1 path2  # uploads specific files
 """
+
 from __future__ import annotations
 
 import os
@@ -25,7 +26,9 @@ DATA_DIR = ROOT / "data"
 def env(name: str) -> str:
     v = os.environ.get(name)
     if not v:
-        sys.exit(f"ERROR: env var {name} is not set. Run `azd env get-values >> .env` first.")
+        sys.exit(
+            f"ERROR: env var {name} is not set. Run `azd env get-values >> .env` first."
+        )
     return v
 
 
@@ -39,7 +42,9 @@ def main(argv: list[str]) -> int:
         pdfs = sorted(DATA_DIR.glob("*.pdf"))
 
     if not pdfs:
-        sys.exit(f"ERROR: no PDFs found. Drop files in {DATA_DIR} or pass paths as args.")
+        sys.exit(
+            f"ERROR: no PDFs found. Drop files in {DATA_DIR} or pass paths as args."
+        )
 
     cred = DefaultAzureCredential(exclude_interactive_browser_credential=False)
     bsc = BlobServiceClient(f"https://{account}.blob.core.windows.net", credential=cred)

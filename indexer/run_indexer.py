@@ -17,6 +17,7 @@ Required env (load via `azd env get-values > .env` or set manually):
 Usage:
   python indexer/run_indexer.py
 """
+
 from __future__ import annotations
 
 import json
@@ -180,7 +181,11 @@ def main():
     while time.time() < deadline:
         st = admin.get(f"/indexers('{INDEXER_NAME}')/search.status")
         last = (st.get("lastResult") if isinstance(st, dict) else None) or {}
-        status = last.get("status") or (st.get("status") if isinstance(st, dict) else None) or "unknown"
+        status = (
+            last.get("status")
+            or (st.get("status") if isinstance(st, dict) else None)
+            or "unknown"
+        )
         if status != last_status:
             print(f"  status={status}")
             last_status = status
@@ -191,15 +196,21 @@ def main():
     final = admin.get(f"/indexers('{INDEXER_NAME}')/search.status")
     last = (final.get("lastResult") if isinstance(final, dict) else None) or {}
     print("\n=== Indexer last result ===")
-    print(json.dumps({
-        "status":         last.get("status"),
-        "itemsProcessed": last.get("itemsProcessed"),
-        "itemsFailed":    last.get("itemsFailed"),
-        "errors":         last.get("errors"),
-        "warnings":       (last.get("warnings") or [])[:3],
-        "startTime":      last.get("startTime"),
-        "endTime":        last.get("endTime"),
-    }, indent=2, default=str))
+    print(
+        json.dumps(
+            {
+                "status": last.get("status"),
+                "itemsProcessed": last.get("itemsProcessed"),
+                "itemsFailed": last.get("itemsFailed"),
+                "errors": last.get("errors"),
+                "warnings": (last.get("warnings") or [])[:3],
+                "startTime": last.get("startTime"),
+                "endTime": last.get("endTime"),
+            },
+            indent=2,
+            default=str,
+        )
+    )
 
     if last.get("status") != "success":
         return 1
