@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Voice RAG — Latency Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Voice RAG Bot — Latency Showcase</h1>
+      <div class="path-toggle">
+        <label><input type="radio" name="path" value="A" checked /> Path A: Voice Live (integrated)</label>
+        <label><input type="radio" name="path" value="B" /> Path B: Composed (STT → AOAI → TTS)</label>
+      </div>
+    </header>
+
+    <main>
+      <section class="call">
+        <button id="startBtn">Start call</button>
+        <button id="stopBtn" disabled>End call</button>
+        <canvas id="waveform" width="600" height="80"></canvas>
+        <div id="transcript" aria-live="polite"></div>
+      </section>
+
+      <section class="metrics">
+        <h2>Per-turn latency (ms)</h2>
+        <table>
+          <thead>
+            <tr><th>Stage</th><th>Last</th><th>p50</th><th>p95</th></tr>
+          </thead>
+          <tbody id="metricsBody"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

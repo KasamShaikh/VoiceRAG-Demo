@@ -1,0 +1,3 @@
+{"q": "REPLACE_WITH_QUESTION_FROM_PDF_1", "expected_chunks": ["section or page hint"], "expected_answer": "..."}
+{"q": "REPLACE_WITH_QUESTION_FROM_PDF_1", "expected_chunks": [], "expected_answer": "..."}
+{"q": "REPLACE_WITH_QUESTION_FROM_PDF_2", "expected_chunks": [], "expected_answer": "..."}

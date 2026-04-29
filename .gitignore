@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+build/
+
+# azd
+.azure/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Local PDFs / data
+data/
+*.pdf
+
+# OS
+.DS_Store
+Thumbs.db

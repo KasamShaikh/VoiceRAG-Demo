@@ -1,0 +1,101 @@
+{
+    "name": "kb-skillset",
+    "description": "Layout-aware cracking + 512/64 chunking + AOAI embedding for kb-pdfs",
+    "skills": [
+        {
+            "@odata.type": "#Microsoft.Skills.Util.DocumentIntelligenceLayoutSkill",
+            "name": "layout",
+            "context": "/document",
+            "outputMode": "oneToMany",
+            "markdownHeaderDepth": "h3",
+            "inputs": [
+                {
+                    "name": "file_data",
+                    "source": "/document/file_data"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "markdown_document",
+                    "targetName": "markdownDocument"
+                }
+            ]
+        },
+        {
+            "@odata.type": "#Microsoft.Skills.Text.SplitSkill",
+            "name": "split",
+            "context": "/document/markdownDocument/*",
+            "textSplitMode": "pages",
+            "maximumPageLength": 2048,
+            "pageOverlapLength": 256,
+            "unit": "characters",
+            "inputs": [
+                {
+                    "name": "text",
+                    "source": "/document/markdownDocument/*/content"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "textItems",
+                    "targetName": "chunks"
+                }
+            ]
+        },
+        {
+            "@odata.type": "#Microsoft.Skills.Text.AzureOpenAIEmbeddingSkill",
+            "name": "embed",
+            "context": "/document/markdownDocument/*/chunks/*",
+            "resourceUri": "${AZURE_OPENAI_ENDPOINT}",
+            "deploymentId": "${AZURE_OPENAI_EMBEDDING_DEPLOYMENT}",
+            "modelName": "text-embedding-3-large",
+            "dimensions": 3072,
+            "inputs": [
+                {
+                    "name": "text",
+                    "source": "/document/markdownDocument/*/chunks/*"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "embedding",
+                    "targetName": "vector"
+                }
+            ]
+        }
+    ],
+    "indexProjections": {
+        "selectors": [
+            {
+                "targetIndexName": "kb-index",
+                "parentKeyFieldName": "parent_id",
+                "sourceContext": "/document/markdownDocument/*/chunks/*",
+                "mappings": [
+                    {
+                        "name": "content",
+                        "source": "/document/markdownDocument/*/chunks/*"
+                    },
+                    {
+                        "name": "content_vector",
+                        "source": "/document/markdownDocument/*/chunks/*/vector"
+                    },
+                    {
+                        "name": "title",
+                        "source": "/document/metadata_storage_name"
+                    },
+                    {
+                        "name": "section",
+                        "source": "/document/markdownDocument/*/sections/*"
+                    },
+                    {
+                        "name": "source_url",
+                        "source": "/document/metadata_storage_path"
+                    }
+                ]
+            }
+        ],
+        "parameters": {
+            "projectionMode": "skipIndexingParentDocuments"
+        }
+    }
+}

@@ -1,0 +1,11 @@
+name: voicebot-rag
+metadata:
+  template: voicebot-rag@0.1.0
+services:
+  bridge:
+    project: ./bridge
+    language: python
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .

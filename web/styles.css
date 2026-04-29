@@ -1,0 +1,9 @@
+body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 980px; }
+header h1 { margin: 0 0 .5rem; }
+.path-toggle label { margin-right: 1.5rem; }
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2rem; }
+.call canvas { display: block; margin: 1rem 0; background: #f4f4f8; border-radius: 8px; }
+#transcript { min-height: 6rem; padding: .75rem; background: #fafafa; border-radius: 6px; }
+.metrics table { width: 100%; border-collapse: collapse; }
+.metrics th, .metrics td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #eee; }
+button { padding: .5rem 1rem; margin-right: .5rem; }
