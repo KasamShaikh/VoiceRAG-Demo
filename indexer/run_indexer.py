@@ -29,7 +29,7 @@ from pathlib import Path
 import httpx
 from azure.identity import DefaultAzureCredential
 
-API = "2024-07-01"
+API = "2024-11-01-preview"
 ROOT = Path(__file__).resolve().parent
 INDEX_FILE = ROOT / "index.json"
 SKILLSET_FILE = ROOT / "skillset.json"

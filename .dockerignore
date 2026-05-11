@@ -1,0 +1,17 @@
+.git
+.gitignore
+.azure
+.azure-*.log
+.venv
+**/__pycache__
+**/*.pyc
+data
+eval
+indexer
+infra
+scripts
+PLAN.md
+README.md
+**/*.md
+.vscode
+.idea

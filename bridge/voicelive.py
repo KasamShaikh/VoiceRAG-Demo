@@ -44,7 +44,8 @@ KB_TOOL = {
         "Search the insurance knowledge base (policy wording + customer policy "
         "certificate) for facts. Use for any user question about coverage, "
         "benefits, exclusions, premium, waiting periods, claims, or specific "
-        "values from the customer's policy."
+        "values from the customer's policy, including policy number, start date, "
+        "end date, nominee, sum insured, and add-ons."
     ),
     "parameters": {
         "type": "object",
@@ -85,28 +86,54 @@ def session_update_event() -> dict[str, Any]:
 
 def _format_kb_result(hits: list[Any]) -> str:
     if not hits:
-        return json.dumps({"status": "no_results"})
+        return "No matching knowledge base results were found."
     out = []
     for i, h in enumerate(hits, 1):
-        out.append(
-            {
-                "tag": f"doc{i}",
-                "title": h.title,
-                "section": h.section,
-                "page": h.page,
-                "snippet": (h.content or "")[:1200],
-            }
-        )
-    return json.dumps({"status": "ok", "results": out})
+        section = f" - {h.section}" if h.section else ""
+        page = f" p.{h.page}" if h.page is not None else ""
+        snippet = (h.content or "").strip().replace("\n", " ")
+        if len(snippet) > 500:
+            snippet = snippet[:500] + "..."
+        out.append(f"[doc{i}] {h.title}{section}{page}\n{snippet}")
+    return "\n\n".join(out)
+
+
+async def _retrieve_hits(query: str) -> tuple[list[Any], dict[str, float]]:
+    timings: dict[str, float] = {}
+    primary_k = 3
+    expansion_k = 2
+
+    t0 = time.perf_counter()
+    vec = await embed(query)
+    timings["embed"] = (time.perf_counter() - t0) * 1000.0
+
+    t1 = time.perf_counter()
+    primary, _ = await hybrid_semantic_search(query, top_k=primary_k, query_vector=vec)
+    expansion, _ = await hybrid_semantic_search(
+        query,
+        top_k=expansion_k,
+        vector_k=30,
+        query_vector=vec,
+    )
+    timings["search"] = (time.perf_counter() - t1) * 1000.0
+
+    merged = list(primary)
+    seen = {h.id for h in primary}
+    for h in expansion:
+        if h.id in seen:
+            continue
+        merged.append(h)
+        seen.add(h.id)
+        if len(merged) >= primary_k + expansion_k:
+            break
+
+    return merged, timings
 
 
 async def _run_kb_search(query: str) -> tuple[str, dict[str, float]]:
     timings: dict[str, float] = {}
-    t0 = time.perf_counter()
-    vec = await embed(query)
-    timings["embed"] = (time.perf_counter() - t0) * 1000.0
-    hits, st = await hybrid_semantic_search(query, query_vector=vec)
-    timings["search"] = st.get("search", 0.0)
+    hits, st = await _retrieve_hits(query)
+    timings.update(st)
     return _format_kb_result(hits), timings
 
 
@@ -199,7 +226,12 @@ async def _upstream_to_client(
     client: WebSocket, upstream: websockets.WebSocketClientProtocol
 ) -> None:
     pending_calls: dict[str, dict[str, str]] = {}
-    turn: dict[str, Any] = {"started": None, "first_audio_ms": None}
+    turn: dict[str, Any] = {
+        "started": None,
+        "final_started": None,
+        "first_audio_ms": None,
+        "final_to_first_audio_ms": None,
+    }
     try:
         async for raw in upstream:
             if isinstance(raw, (bytes, bytearray)):
@@ -216,15 +248,43 @@ async def _upstream_to_client(
             etype = evt.get("type")
             if etype == "input_audio_buffer.speech_started":
                 turn["started"] = time.perf_counter()
+                turn["final_started"] = None
                 turn["first_audio_ms"] = None
-            elif etype == "response.audio.delta" and turn["started"] and turn["first_audio_ms"] is None:
-                turn["first_audio_ms"] = (time.perf_counter() - turn["started"]) * 1000.0
+                turn["final_to_first_audio_ms"] = None
+            elif etype == "conversation.item.input_audio_transcription.completed":
+                if turn["started"]:
+                    turn["final_started"] = time.perf_counter()
+            elif (
+                etype == "response.audio.delta"
+                and turn["started"]
+                and turn["first_audio_ms"] is None
+            ):
+                now = time.perf_counter()
+                turn["first_audio_ms"] = (now - turn["started"]) * 1000.0
+                if turn["final_started"]:
+                    turn["final_to_first_audio_ms"] = (
+                        now - turn["final_started"]
+                    ) * 1000.0
+                await client.send_text(
+                    json.dumps(
+                        {
+                            "type": "metrics",
+                            "first_audio_ms": round(turn["first_audio_ms"]),
+                            "final_to_first_audio_ms": round(
+                                turn["final_to_first_audio_ms"]
+                            )
+                            if turn["final_to_first_audio_ms"] is not None
+                            else None,
+                        }
+                    )
+                )
             elif etype == "response.done" and turn["started"]:
                 full_ms = (time.perf_counter() - turn["started"]) * 1000.0
                 telemetry.record(
                     path="voicelive",
                     first_audio_ms=turn["first_audio_ms"],
                     full_ms=full_ms,
+                    extra={"final_to_first_audio_ms": turn["final_to_first_audio_ms"]},
                 )
                 turn["started"] = None
             if etype == "response.output_item.added":

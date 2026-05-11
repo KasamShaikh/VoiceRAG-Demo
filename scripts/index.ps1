@@ -5,7 +5,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-Push-Location $PSScriptRoot
+Push-Location (Join-Path $PSScriptRoot '..')
 try {
     Write-Host "==> Loading azd env values into the current process ..." -ForegroundColor Cyan
     $envValues = & azd env get-values 2>$null

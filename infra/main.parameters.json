@@ -17,6 +17,12 @@
         "embeddingModelName": {
             "value": "${AZURE_OPENAI_EMBEDDING_MODEL=text-embedding-3-large}"
         },
+        "realtimeModelName": {
+            "value": "${AZURE_OPENAI_REALTIME_MODEL=gpt-realtime-mini}"
+        },
+        "realtimeModelVersion": {
+            "value": "${AZURE_OPENAI_REALTIME_MODEL_VERSION=2025-12-15}"
+        },
         "principalId": {
             "value": "${AZURE_PRINCIPAL_ID=}"
         }

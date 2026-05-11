@@ -3,37 +3,127 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Voice RAG — Latency Demo</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <title>Voice Assistant — Latency Showcase</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css?v=20260506-1" />
   </head>
   <body>
-    <header>
-      <h1>Voice RAG Bot — Latency Showcase</h1>
-      <div class="path-toggle">
-        <label><input type="radio" name="path" value="A" checked /> Path A: Voice Live (integrated)</label>
-        <label><input type="radio" name="path" value="B" /> Path B: Composed (STT → AOAI → TTS)</label>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">VR</span>
+        <div class="brand-text">
+          <strong>Voice RAG Assistant</strong>
+          <span>Knowledge-grounded voice bot · Latency showcase</span>
+        </div>
       </div>
     </header>
 
-    <main>
-      <section class="call">
-        <button id="startBtn">Start call</button>
-        <button id="stopBtn" disabled>End call</button>
-        <canvas id="waveform" width="600" height="80"></canvas>
-        <div id="transcript" aria-live="polite"></div>
+    <main class="container">
+      <section class="card hero">
+        <div class="hero-head">
+          <h1>Talk to your policy documents</h1>
+          <p class="muted">
+            Two response paths run on the same knowledge base. Path A is the
+            integrated realtime model. Path B is composed (STT → AOAI → TTS)
+            for full step-level control. Switch paths and compare latency in
+            real time.
+          </p>
+        </div>
+
+        <div class="path-toggle" role="tablist" aria-label="Response path">
+          <label class="pill">
+            <input type="radio" name="path" value="A" checked />
+            <span><b>Path A</b> · Voice Live (integrated)</span>
+          </label>
+          <label class="pill">
+            <input type="radio" name="path" value="B" />
+            <span><b>Path B</b> · Optimized (STT → Search → AOAI → TTS)</span>
+          </label>
+          <label class="pill">
+            <input type="radio" name="path" value="C" />
+            <span><b>Path C</b> · Customer baseline (STT → Search → LLM → TTS)</span>
+          </label>
+        </div>
+
+        <div class="call">
+          <button id="startBtn" class="btn btn-primary">Start call</button>
+          <button id="stopBtn" class="btn btn-ghost" disabled>End call</button>
+          <button id="resetBtn" class="btn btn-ghost" type="button">Reset metrics</button>
+          <canvas id="waveform" width="600" height="80" aria-hidden="true"></canvas>
+          <div id="transcript" class="transcript" aria-live="polite"></div>
+        </div>
       </section>
 
-      <section class="metrics">
-        <h2>Per-turn latency (ms)</h2>
-        <table>
-          <thead>
-            <tr><th>Stage</th><th>Last</th><th>p50</th><th>p95</th></tr>
-          </thead>
-          <tbody id="metricsBody"></tbody>
-        </table>
+      <section class="card metrics">
+        <div class="metrics-head">
+          <h2>Per-turn latency</h2>
+          <p class="muted">
+            <b>First audio</b> is the silence the caller experiences before the
+            bot starts speaking — this drives perceived responsiveness.
+            <b>Spoken response</b> is total time including the full reply
+            playback.
+          </p>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metrics-col" data-path="A">
+            <div class="col-head">
+              <span class="badge badge-a">Path A</span>
+              <span class="col-label">Voice Live (integrated)</span>
+              <span class="turn-count" id="countA">0 turns</span>
+            </div>
+            <div class="stat-list" id="statsA">
+              <div class="empty-row">No turns yet — start a call on Path A.</div>
+            </div>
+          </div>
+
+          <div class="metrics-col" data-path="B">
+            <div class="col-head">
+              <span class="badge badge-b">Path B</span>
+              <span class="col-label">Optimized (STT → Search → AOAI → TTS)</span>
+              <span class="turn-count" id="countB">0 turns</span>
+            </div>
+            <div class="stat-list" id="statsB">
+              <div class="empty-row">No turns yet — switch to Path B and start a call.</div>
+            </div>
+            <div class="breakdown" id="breakdownB" hidden>
+              <div class="breakdown-head">Last turn — first-audio breakdown</div>
+              <div class="breakdown-bar" id="breakdownBar"></div>
+              <div class="breakdown-legend" id="breakdownLegend"></div>
+            </div>
+          </div>
+
+          <div class="metrics-col" data-path="C">
+            <div class="col-head">
+              <span class="badge badge-c">Path C</span>
+              <span class="col-label">Customer baseline (STT → Search → LLM → TTS)</span>
+              <span class="turn-count" id="countC">0 turns</span>
+            </div>
+            <div class="stat-list" id="statsC">
+              <div class="empty-row">No turns yet — switch to Path C and start a call.</div>
+            </div>
+            <div class="breakdown" id="breakdownC" hidden>
+              <div class="breakdown-head">Last turn — first-audio breakdown</div>
+              <div class="breakdown-bar" id="breakdownBarC"></div>
+              <div class="breakdown-legend" id="breakdownLegendC"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="legend">
+          <span class="dot dot-a"></span> Path A target: <b>&lt; 1.5 s</b> first audio &nbsp;·&nbsp;
+          <span class="dot dot-b"></span> Path B is optimized for low first-audio latency using tighter STT endpointing + tuned retrieval &nbsp;·&nbsp;
+          <span class="dot dot-c"></span> Path C is the customer baseline path for apples-to-apples comparison
+        </div>
       </section>
     </main>
 
-    <script type="module" src="./app.js"></script>
+    <footer class="footer">
+      <span>All values in milliseconds · p95 ignores top 5% outliers</span>
+    </footer>
+
+    <script type="module" src="./app.js?v=20260506-2"></script>
   </body>
 </html>

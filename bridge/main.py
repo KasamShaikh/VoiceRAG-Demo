@@ -24,6 +24,7 @@ from .cache import CacheEntry, get_cache
 from .composed import prewarm as composed_prewarm
 from .composed import router as composed_router
 from .composed import shutdown as composed_shutdown
+from .pathc import prewarm_c, router as pathc_router, shutdown_c
 from .search import embed, hybrid_semantic_search
 from .voicelive import router as voicelive_router
 
@@ -41,9 +42,17 @@ async def _lifespan(app: "FastAPI"):
         await composed_prewarm()
     except Exception:  # noqa: BLE001
         logger.warning("prewarm failed", exc_info=True)
+    try:
+        await prewarm_c()
+    except Exception:  # noqa: BLE001
+        logger.warning("pathc prewarm failed", exc_info=True)
     yield
     try:
         await composed_shutdown()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        await shutdown_c()
     except Exception:  # noqa: BLE001
         pass
 
@@ -51,6 +60,7 @@ async def _lifespan(app: "FastAPI"):
 app = FastAPI(title="Voice RAG Bridge", version="0.7.0", lifespan=_lifespan)
 app.include_router(voicelive_router)
 app.include_router(composed_router)
+app.include_router(pathc_router)
 
 # Serve the web client (Path A demo) when the folder is present.
 import os as _os  # noqa: E402

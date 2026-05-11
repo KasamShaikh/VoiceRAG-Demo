@@ -56,8 +56,11 @@ _token_lock = asyncio.Lock()
 
 async def _issue_speech_token(force: bool = False) -> tuple[str, str]:
     region = config.AZURE_SPEECH_REGION
+    endpoint = config.AZURE_SPEECH_ENDPOINT
     if not region:
         raise RuntimeError("AZURE_SPEECH_REGION is not set")
+    if not endpoint:
+        raise RuntimeError("AZURE_SPEECH_ENDPOINT is not set")
     now = time.time()
     if (
         not force
@@ -70,7 +73,10 @@ async def _issue_speech_token(force: bool = False) -> tuple[str, str]:
         if not force and _token_cache["token"] and _token_cache["exp"] > time.time():
             return _token_cache["token"], region
         aad = config.credential().get_token(config.AZURE_VOICE_LIVE_SCOPE).token
-        url = f"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+        # AAD-based issueToken MUST hit the resource's custom-domain endpoint.
+        # The regional <region>.api.cognitive.microsoft.com host is key-only
+        # and returns 400 Bad Request when given an AAD bearer token.
+        url = f"{endpoint.rstrip('/')}/sts/v1.0/issueToken"
         client = _shared_http()
         r = await client.post(
             url,
@@ -148,15 +154,68 @@ async def _tts_pcm(
 # ---- RAG pipeline (per finalized utterance) --------------------------------
 
 
+# Tuned defaults for Path B optimization: moderate context expansion while
+# preserving low prefill latency.
+_LLM_TOP_K = config.COMPOSED_LLM_TOP_K
+_LLM_SNIPPET_MAX = config.COMPOSED_SNIPPET_MAX
+
+
 def _format_sources(hits: list[Any]) -> str:
     out: list[str] = []
-    for i, h in enumerate(hits, start=1):
-        loc = h.section or h.title
+    for i, h in enumerate(hits[:_LLM_TOP_K], start=1):
         snippet = (h.content or "").strip().replace("\n", " ")
-        if len(snippet) > 1200:
-            snippet = snippet[:1200] + "..."
-        out.append(f"[doc{i}] ({h.title} - {loc})\n{snippet}")
+        if len(snippet) > _LLM_SNIPPET_MAX:
+            snippet = snippet[:_LLM_SNIPPET_MAX] + "..."
+        out.append(f"[doc{i}] {h.title} - {snippet}")
     return "\n\n".join(out)
+
+
+async def _retrieve_hits(query: str) -> tuple[list[Any], dict[str, float]]:
+    """Hybrid primary retrieval + small vector expansion for Path B.
+
+    This keeps Path B closer to customer Path C retrieval quality while
+    controlling latency through lower default Ks than Path C.
+    """
+    timings: dict[str, float] = {}
+    t = time.perf_counter()
+    vec = await embed(query)
+    timings["embed_ms"] = (time.perf_counter() - t) * 1000.0
+
+    t = time.perf_counter()
+    primary_task = asyncio.create_task(
+        hybrid_semantic_search(
+            query,
+            top_k=config.COMPOSED_PRIMARY_K,
+            query_vector=vec,
+        )
+    )
+    expansion_task: asyncio.Task | None = None
+    if config.COMPOSED_EXPANSION_K > 0:
+        expansion_task = asyncio.create_task(
+            hybrid_semantic_search(
+                query,
+                top_k=config.COMPOSED_EXPANSION_K,
+                vector_k=config.COMPOSED_EXPANSION_VECTOR_K,
+                query_vector=vec,
+            )
+        )
+    primary, _ = await primary_task
+    expansion: list[Any] = []
+    if expansion_task is not None:
+        expansion, _ = await expansion_task
+    timings["search_ms"] = (time.perf_counter() - t) * 1000.0
+
+    merged = list(primary)
+    seen = {h.id for h in primary}
+    target = config.COMPOSED_PRIMARY_K + config.COMPOSED_EXPANSION_K
+    for h in expansion:
+        if h.id in seen:
+            continue
+        merged.append(h)
+        seen.add(h.id)
+        if len(merged) >= target:
+            break
+    return merged, timings
 
 
 async def _safe_send(ws: WebSocket, payload: dict[str, Any]) -> None:
@@ -174,15 +233,34 @@ async def _send_tts(
     region: str,
     state: dict[str, Any],
 ) -> None:
+    if state.get("cancelled"):
+        return
     t = time.perf_counter()
     pcm = await _tts_pcm(http, text, token, region)
+    if state.get("cancelled"):
+        return
     if state.get("tts_first_byte_ms") is None:
         state["tts_first_byte_ms"] = (time.perf_counter() - t) * 1000.0
     if state.get("first_audio_ms") is None and state.get("turn_started") is not None:
-        state["first_audio_ms"] = (time.perf_counter() - state["turn_started"]) * 1000.0
+        now = time.perf_counter()
+        state["first_audio_ms"] = (now - state["turn_started"]) * 1000.0
+        if state.get("final_started") is not None:
+            state["final_to_first_audio_ms"] = (now - state["final_started"]) * 1000.0
         await _safe_send(
             ws,
-            {"type": "metrics", "first_audio_ms": round(state["first_audio_ms"])},
+            {
+                "type": "metrics",
+                "first_audio_ms": round(state["first_audio_ms"]),
+                "final_to_first_audio_ms": round(state.get("final_to_first_audio_ms"))
+                if state.get("final_to_first_audio_ms") is not None
+                else None,
+                "breakdown": {
+                    "embed_ms": round(state.get("embed_ms") or 0),
+                    "search_ms": round(state.get("search_ms") or 0),
+                    "llm_ttft_ms": round(state.get("llm_ttft_ms") or 0),
+                    "tts_first_byte_ms": round(state["tts_first_byte_ms"]),
+                },
+            },
         )
     await _safe_send(
         ws,
@@ -200,22 +278,50 @@ async def _run_turn(
     token: str,
     region: str,
     turn_started: float,
+    final_started: float | None,
+    state: dict[str, Any] | None = None,
+    speculative: tuple[list[Any], dict[str, float]] | None = None,
 ) -> None:
-    state: dict[str, Any] = {
-        "turn_started": turn_started,
-        "first_audio_ms": None,
-        "llm_ttft_ms": None,
-        "tts_first_byte_ms": None,
-    }
+    if state is None:
+        state = {}
+    state.setdefault("turn_started", turn_started)
+    state.setdefault("final_started", final_started)
+    state.setdefault("first_audio_ms", None)
+    state.setdefault("final_to_first_audio_ms", None)
+    state.setdefault("llm_ttft_ms", None)
+    state.setdefault("tts_first_byte_ms", None)
+    state.setdefault("cancelled", False)
     http = _shared_http()
-    timings: dict[str, float] = {}
+    tts_q: asyncio.Queue[str | None] = asyncio.Queue()
+    tts_worker: asyncio.Task | None = None
+
+    async def _tts_worker() -> None:
+        while True:
+            text = await tts_q.get()
+            try:
+                if text is None:
+                    return
+                await _send_tts(ws, http, text, token, region, state)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("tts worker failed")
+                state["cancelled"] = True
+                await _safe_send(ws, {"type": "error", "error": f"tts: {e}"})
+            finally:
+                tts_q.task_done()
+
     try:
-        t = time.perf_counter()
-        vec = await embed(query)
-        timings["embed_ms"] = (time.perf_counter() - t) * 1000.0
-        t = time.perf_counter()
-        hits, _ = await hybrid_semantic_search(query, query_vector=vec)
-        timings["search_ms"] = (time.perf_counter() - t) * 1000.0
+        if speculative is not None:
+            hits, _spec_timings = speculative
+            # Speculative retrieval runs while user is speaking, so it should not
+            # inflate silence-first-audio breakdown. Use near-zero timings here.
+            if not hits:
+                hits, timings = await _retrieve_hits(query)
+            else:
+                timings = {"embed_ms": 0.0, "search_ms": 0.0}
+        else:
+            hits, timings = await _retrieve_hits(query)
+        state["embed_ms"] = timings["embed_ms"]
+        state["search_ms"] = timings["search_ms"]
     except Exception as e:  # noqa: BLE001
         logger.exception("retrieval failed")
         await _safe_send(ws, {"type": "error", "error": f"retrieval: {e}"})
@@ -244,6 +350,7 @@ async def _run_turn(
     )
 
     client = config.aoai_client()
+    t_llm = time.perf_counter()
     try:
         stream = await client.chat.completions.create(
             model=config.AZURE_OPENAI_CHAT_DEPLOYMENT,
@@ -251,7 +358,7 @@ async def _run_turn(
             max_tokens=180,
             stream=True,
             messages=[
-                {"role": "system", "content": config.SYSTEM_PROMPT},
+                {"role": "system", "content": config.COMPOSED_SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
             ],
         )
@@ -265,13 +372,16 @@ async def _run_turn(
     sentences_sent = 0
     try:
         async for chunk in stream:
+            if state.get("cancelled"):
+                break
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta.content
             if not delta:
                 continue
             if state["llm_ttft_ms"] is None:
-                state["llm_ttft_ms"] = (time.perf_counter() - turn_started) * 1000.0
+                # Pure LLM time: from chat.create() call to first token.
+                state["llm_ttft_ms"] = (time.perf_counter() - t_llm) * 1000.0
             full_text.append(delta)
             buf += delta
             # flush every sentence boundary; first sentence flushes ASAP.
@@ -294,16 +404,41 @@ async def _run_turn(
                 sentence = buf[:cut].strip()
                 buf = buf[cut:]
                 if sentence:
-                    await _send_tts(ws, http, sentence, token, region, state)
+                    if sentences_sent == 0:
+                        await _send_tts(ws, http, sentence, token, region, state)
+                    else:
+                        if tts_worker is None:
+                            tts_worker = asyncio.create_task(_tts_worker())
+                        await tts_q.put(sentence)
                     sentences_sent += 1
     except Exception as e:  # noqa: BLE001
         logger.exception("chat stream failed")
         await _safe_send(ws, {"type": "error", "error": f"chat: {e}"})
+        if tts_worker is not None:
+            tts_worker.cancel()
+            try:
+                await tts_worker
+            except asyncio.CancelledError:
+                pass
         return
 
     tail = buf.strip()
-    if tail:
-        await _send_tts(ws, http, tail, token, region, state)
+    if tail and not state.get("cancelled"):
+        if sentences_sent == 0:
+            await _send_tts(ws, http, tail, token, region, state)
+        else:
+            if tts_worker is None:
+                tts_worker = asyncio.create_task(_tts_worker())
+            await tts_q.put(tail)
+
+    if tts_worker is not None:
+        await tts_q.put(None)
+        await tts_q.join()
+        await tts_worker
+
+    if state.get("cancelled"):
+        # do not emit response.done; client already stopped this turn
+        return
 
     full = "".join(full_text).strip()
     full_ms = (time.perf_counter() - turn_started) * 1000.0
@@ -313,6 +448,7 @@ async def _run_turn(
         full_ms=full_ms,
         llm_ttft_ms=state.get("llm_ttft_ms"),
         tts_first_byte_ms=state.get("tts_first_byte_ms"),
+        extra={"final_to_first_audio_ms": state.get("final_to_first_audio_ms")},
         **timings,
     )
     await _safe_send(
@@ -350,17 +486,32 @@ async def composed_ws(client: WebSocket) -> None:
     audio_cfg = speechsdk.audio.AudioConfig(stream=push_stream)
     sc = speechsdk.SpeechConfig(auth_token=token, region=region)
     sc.speech_recognition_language = config.AZURE_SPEECH_STT_LANGUAGE
+    sc.set_property(
+        speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
+        str(config.COMPOSED_STT_SEGMENTATION_MS),
+    )
     recognizer = speechsdk.SpeechRecognizer(speech_config=sc, audio_config=audio_cfg)
 
     events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     speaking = {"started": None}  # perf_counter at first partial of an utterance
+    current: dict[str, Any] = {
+        "task": None,
+        "state": None,
+        "spec_task": None,
+        "spec_cache": None,
+    }
 
     def _post(ev: dict[str, Any]) -> None:
         loop.call_soon_threadsafe(events.put_nowait, ev)
 
     def _on_recognizing(evt: Any) -> None:
-        if speaking["started"] is None and (evt.result.text or "").strip():
+        text = (evt.result.text or "").strip()
+        if speaking["started"] is None and text:
             speaking["started"] = time.perf_counter()
+            # Barge-in: a new utterance has begun while we may still be
+            # synthesising the previous answer. Signal the consumer to
+            # cancel any in-flight turn and clear the client's playback.
+            _post({"type": "barge_in"})
         _post({"type": "partial", "text": evt.result.text or ""})
 
     def _on_recognized(evt: Any) -> None:
@@ -378,24 +529,108 @@ async def composed_ws(client: WebSocket) -> None:
     recognizer.start_continuous_recognition_async()
 
     async def _consume() -> None:
+        async def _speculate(query: str) -> None:
+            try:
+                hits, timings = await _retrieve_hits(query)
+                current["spec_cache"] = {
+                    "query": query,
+                    "hits": hits,
+                    "timings": timings,
+                    "ts": time.perf_counter(),
+                }
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                current["spec_task"] = None
+
+        def _use_spec_cache(
+            final_text: str,
+        ) -> tuple[list[Any], dict[str, float]] | None:
+            cache = current.get("spec_cache")
+            if not cache:
+                return None
+            age_ms = (time.perf_counter() - cache.get("ts", 0.0)) * 1000.0
+            if age_ms > config.COMPOSED_SPEC_MAX_AGE_MS:
+                return None
+            q = (cache.get("query") or "").strip().lower()
+            f = (final_text or "").strip().lower()
+            if not q or not f:
+                return None
+            if f.startswith(q) or q.startswith(f) or (len(q) >= 24 and q in f):
+                return cache.get("hits") or [], cache.get("timings") or {}
+            return None
+
         while True:
             ev = await events.get()
             kind = ev.get("type")
-            if kind == "partial":
+            if kind == "barge_in":
+                state = current.get("state")
+                task = current.get("task")
+                spec_task = current.get("spec_task")
+                if state is not None:
+                    state["cancelled"] = True
+                if task is not None and not task.done():
+                    task.cancel()
+                if spec_task is not None and not spec_task.done():
+                    spec_task.cancel()
+                current["task"] = None
+                current["state"] = None
+                current["spec_task"] = None
+                current["spec_cache"] = None
+                # tell the client to stop playing buffered TTS audio
+                await _safe_send(client, {"type": "playback.clear"})
+            elif kind == "partial":
+                partial_text = (ev.get("text") or "").strip()
                 await _safe_send(
                     client,
-                    {"type": "transcript.partial", "text": ev.get("text", "")},
+                    {"type": "transcript.partial", "text": partial_text},
                 )
+                if (
+                    config.COMPOSED_ENABLE_SPECULATIVE
+                    and len(partial_text) >= config.COMPOSED_SPEC_PARTIAL_MIN_CHARS
+                    and current.get("task") is None
+                    and current.get("spec_task") is None
+                ):
+                    cached = current.get("spec_cache")
+                    if not cached or cached.get("query") != partial_text:
+                        current["spec_task"] = asyncio.create_task(
+                            _speculate(partial_text)
+                        )
             elif kind == "final":
                 text = (ev.get("text") or "").strip()
+                final_started = time.perf_counter()
                 await _safe_send(
                     client,
                     {"type": "transcript.final", "text": text},
                 )
-                if text:
-                    asyncio.create_task(
-                        _run_turn(client, text, token, region, ev["started"])
+                # Drop spurious tiny finals (filler noise / mic picking up
+                # the bot's own audio). Real questions are >= 3 words or 12 chars.
+                if not text or (len(text) < 12 and len(text.split()) < 3):
+                    continue
+                # if a previous turn is still running, cancel it before
+                # starting the new one
+                prev_state = current.get("state")
+                prev_task = current.get("task")
+                if prev_state is not None:
+                    prev_state["cancelled"] = True
+                if prev_task is not None and not prev_task.done():
+                    prev_task.cancel()
+                spec = _use_spec_cache(text)
+                state: dict[str, Any] = {}
+                current["state"] = state
+                current["task"] = asyncio.create_task(
+                    _run_turn(
+                        client,
+                        text,
+                        token,
+                        region,
+                        ev["started"],
+                        final_started,
+                        state,
+                        speculative=spec,
                     )
+                )
+                current["spec_cache"] = None
             elif kind == "canceled":
                 await _safe_send(
                     client,

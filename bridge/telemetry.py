@@ -56,6 +56,7 @@ def summary(path: str | None = None) -> dict[str, Any]:
         rows = [r for r in _turns if path is None or r.get("path") == path]
     keys = (
         "first_audio_ms",
+        "final_to_first_audio_ms",
         "full_ms",
         "embed_ms",
         "search_ms",

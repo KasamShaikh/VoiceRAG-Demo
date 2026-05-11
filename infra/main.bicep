@@ -34,6 +34,11 @@ param embeddingModelName string = 'text-embedding-3-large'
 param embeddingModelVersion string = '1'
 param embeddingModelCapacity int = 50
 
+@description('Realtime (Voice Live) model deployment name. Must be a *-realtime model available in the region.')
+param realtimeModelName string = 'gpt-realtime-mini'
+param realtimeModelVersion string = '2025-12-15'
+param realtimeModelCapacity int = 1
+
 @description('Object ID of the developer/principal that should also get data-plane access (for local testing). Leave empty to skip.')
 param principalId string = ''
 
@@ -44,7 +49,7 @@ var uniqueSuffix = uniqueString(resourceGroup().id, environmentName)
 var names = {
   aoai:      'aoai-${environmentName}-${uniqueSuffix}'
   speech:    'speech-${environmentName}-${uniqueSuffix}'
-  search:    'srch-${environmentName}-${uniqueSuffix}'
+  search:    'srch-${environmentName}-${uniqueSuffix}2'
   storage:   take(replace('st${environmentName}${uniqueSuffix}', '-', ''), 24)
   redis:     'redis-${environmentName}-${uniqueSuffix}'
   appi:      'appi-${environmentName}-${uniqueSuffix}'
@@ -170,6 +175,24 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   dependsOn: [ chatDeployment ]   // serialize deployment ops on the same account
 }
 
+resource realtimeDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: aoai
+  name: realtimeModelName
+  sku: {
+    name: 'GlobalStandard'
+    capacity: realtimeModelCapacity
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: realtimeModelName
+      version: realtimeModelVersion
+    }
+    raiPolicyName: 'Microsoft.DefaultV2'
+  }
+  dependsOn: [ embeddingDeployment ]
+}
+
 // -----------------------------------------------------------------------------
 // Azure AI Speech (Voice Live + real-time STT/TTS)
 // -----------------------------------------------------------------------------
@@ -293,6 +316,7 @@ resource bridge 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_OPENAI_ENDPOINT',     value: aoai.properties.endpoint }
             { name: 'AZURE_OPENAI_CHAT_DEPLOYMENT',      value: chatModelName }
             { name: 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT', value: embeddingModelName }
+            { name: 'AZURE_VOICE_LIVE_MODEL',            value: realtimeModelName }
             { name: 'AZURE_SEARCH_ENDPOINT',     value: 'https://${search.name}.search.windows.net' }
             { name: 'AZURE_SEARCH_INDEX',        value: 'kb-index' }
             { name: 'AZURE_SPEECH_ENDPOINT',     value: speech.properties.endpoint }
@@ -322,7 +346,7 @@ var roleIds = {
   searchIndexDataContrib:'8ebe5a00-799e-43f5-93ac-243d3dce84a7'
   blobReader:            '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' // Storage Blob Data Reader
   blobContrib:           'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Contributor
-  acrPull:               '7f951dda-4ed3-11e8-91a4-d4f0273a8f81'
+  acrPull:               '7f951dda-4ed3-4680-a7ca-43fe172d538d'
   redisDataContrib:      'e0f68234-74aa-48ed-b826-c38b57376e17' // Redis Cache Contributor
 }
 
@@ -468,6 +492,7 @@ output AZURE_RESOURCE_GROUP string = resourceGroup().name
 output AZURE_OPENAI_ENDPOINT string = aoai.properties.endpoint
 output AZURE_OPENAI_CHAT_DEPLOYMENT string = chatModelName
 output AZURE_OPENAI_EMBEDDING_DEPLOYMENT string = embeddingModelName
+output AZURE_VOICE_LIVE_MODEL string = realtimeModelName
 
 output AZURE_SEARCH_ENDPOINT string = 'https://${search.name}.search.windows.net'
 output AZURE_SEARCH_NAME string = search.name

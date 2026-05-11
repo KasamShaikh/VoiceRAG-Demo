@@ -6,7 +6,8 @@
             "type": "Edm.String",
             "key": true,
             "filterable": true,
-            "retrievable": true
+            "retrievable": true,
+            "analyzer": "keyword"
         },
         {
             "name": "parent_id",
